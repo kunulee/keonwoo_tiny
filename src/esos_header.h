@@ -12,4 +12,7 @@
 #define HEAP_TINY_SEQ_FLAGS 1
 #define SEQ_DEBUG 1 
 
+/* Recovery flags */ 
+#define HEAP_TINY_RECOVERY_FLAGS 1
+
 #endif 

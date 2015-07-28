@@ -556,7 +556,6 @@ stm_wt_commit(stm_tx_t *tx)
 
   /* Get commit timestamp (may exceed VERSION_MAX by up to MAX_THREADS) */
   t = FETCH_INC_CLOCK + 1;
-
 #ifdef IRREVOCABLE_ENABLED
   if (unlikely(tx->irrevocable))
     goto release_locks;

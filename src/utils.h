@@ -31,7 +31,7 @@
 #include <pos-lib.h> 
 #include "esos_header.h"
 #define COMPILE_TIME_ASSERT(pred)       switch (0) { case 0: case pred: ; }
-
+#define KEONWOO_DEBUG 1
 
 #ifdef DEBUG2
 # ifndef DEBUG
@@ -39,6 +39,7 @@
 # endif /* ! DEBUG */
 #endif /* DEBUG2 */
 
+#define DEBUG 1
 #ifdef DEBUG
 /* Note: stdio is thread-safe */
 # define IO_FLUSH                       fflush(NULL)
@@ -162,7 +163,8 @@ static INLINE void* /* Return allocated address */
 tx_malloc_aligned(char *name,size_t size){ 
 	/* tx descriptor must have saving on a total manage object storage */ 
 	int ret = 0 ; 	
-	void *memptr ; 
+	void *memptr ;
+	 
 #if KEONWOO_DEBUG == 1 
 	printf("[%s][%s]\n" , __func__ , name) ;
 //	ret = pos_posix_memalign( name, &memptr, CACHELINE_SIZE, size) ; 	
@@ -185,20 +187,9 @@ tx_malloc_aligned(char *name,size_t size){
 		printf("[%s][tx_count:%d]\n",__func__,tx_count);
 #endif 
 		/* Add tx desc to object storage */
-		pos_list_insert(name,&tx_count,memptr,sizeof(memptr));
-		tx_count++; // Not Correct Usage.
-		/* set prime object */ 	
-		if( tx_count == 0 ){ 
-#if KEONWOO_DEBUG == 1
-			printf("[%s][pos_set_prime_object complete]\n") ;
-#endif 
-			pos_set_prime_object(name,memptr) ; 	
-		
-		} 
-#if KEONWOO_DEBUG == 1
-		printf("[%s] please wait to create persistent object\n") ; 
-		sleep(2); 
-#endif 
+
+		pos_list_insert(name,&tx_count,memptr,sizeof(void*));
+		tx_count++ ; 	
 	} 
 	return memptr ; 	
 } 

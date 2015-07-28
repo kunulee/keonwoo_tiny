@@ -33,6 +33,7 @@
 #include "utils.h"
 #include "atomic.h"
 #include "gc.h"
+#include "pos-list.h" 
 
 /* ################################################################### *
  * DEFINES
@@ -330,9 +331,10 @@ typedef struct cb_entry {               /* Callback entry */
 #define DELAYED_MAX 1000 
 typedef struct stm_tx {                 /* Transaction descriptor */
   /* Keonwoo Debug */ 
-  void * delayed_addr[DELAYED_MAX] ;
-  unsigned long delayed_size[DELAYED_MAX] ; 	
-  int delayed_index ; 	
+//  void * delayed_addr[DELAYED_MAX] ;
+//  unsigned long delayed_size[DELAYED_MAX] ; 	
+//  int delayed_index ; 	
+  char type ; 
 
   JMP_BUF env;                          /* Environment for setjmp/longjmp */
   stm_tx_attr_t attr;                   /* Transaction attributes (user-specified) */
@@ -1019,7 +1021,6 @@ stm_rollback(stm_tx_t *tx, unsigned int reason)
 {
 //	rollback_cnt++ ; 	
 //	printf("rollback_cnt[%d]\n", rollback_cnt++) ; 
-	tx->delayed_index =0 ; 	
 //	printf("Make delayed index 0\n") ; 
 #if CM == CM_BACKOFF
   unsigned long wait;
@@ -1166,7 +1167,7 @@ void cache_flush_write_entry( w_entry_t *w, unsigned int size){
 		cf_cnt++ ; 	
 		tiny_clflush(w);
 		#if KEONWOO_DEBUG == 1 	
-		printf("[%d][%p] flush cnt : %d\n",w->commit_mark,w,cf_cnt) ; 	
+		printf("[%d][%p] flush cnt : %d,seq_num[%d] \n",w->commit_mark,w,cf_cnt,w->seq_num) ; 	
 		#endif 
 	}	
 	tiny_clflush(vend) ; 	
@@ -1175,8 +1176,8 @@ void cache_flush_write_entry( w_entry_t *w, unsigned int size){
 	tiny_clflush(&w->commit_mark);
 	cf_cnt++; 
 	#if KEONWOO_DEBUG == 1 		
-	printf("[%d][%p] comm flush cnt : %d\n",w->commit_mark,
-			&w->commit_mark,cf_cnt) ; 	
+	printf("[%d][%p] comm flush cnt : %d,seq_num[%d]\n",w->commit_mark,
+			&w->commit_mark,cf_cnt,w->seq_num) ; 	
 	
 	#endif 
 
@@ -1340,6 +1341,8 @@ int_stm_pos_init_thread( char *name)
 	exit(-1) ; 	
   } 
   /* Set attribute */
+
+  tx->type = 'a'; 
   tx->attr = (stm_tx_attr_t)0;
   /* Set status (no need for CAS or atomic op) */
   tx->status = TX_IDLE;
@@ -1676,7 +1679,6 @@ int_stm_commit(stm_tx_t *tx)
   /* Reset to Hybrid mode */
   tx->software = 0;
 #endif /* HYBRID_ASF */
-
 #ifdef IRREVOCABLE_ENABLED
   if (unlikely(tx->irrevocable)) {
     ATOMIC_STORE(&_tinystm.irrevocable, 0);
@@ -1688,14 +1690,12 @@ int_stm_commit(stm_tx_t *tx)
 
   /* Set status to COMMITTED */
   SET_STATUS(tx->status, TX_COMMITTED);
-
   /* Callbacks */
   if (likely(_tinystm.nb_commit_cb != 0)) {
     unsigned int cb;
     for (cb = 0; cb < _tinystm.nb_commit_cb; cb++)
       _tinystm.commit_cb[cb].f(_tinystm.commit_cb[cb].arg);
   }
-
   return 1;
 }
 
@@ -1717,6 +1717,150 @@ int_stm_load(stm_tx_t *tx, volatile stm_word_t *addr)
     return stm_wbetl_read(tx, addr);
 #endif /* DESIGN == MODULAR */
 }
+#if HEAP_TINY_RECOVERY_FLAGS == 1
+static int min_num = 0 ; 	
+static int max_num = 0 ; 	
+static int overflow_flags = 0;
+void get_min_or_max( stm_tx_t *head_tx , int flags){ 
+	
+	w_entry_t *w = head_tx->w_set.entries ; 
+	printf("[%s][w:%p]\n",__func__,w) ; 	
+	stm_tx_t *next_tx = head_tx ; 	
+	
+	/* flags value 0(get_min) value 1(get_max) */	
+	if( flags == 0 ){ 
+		min_num = w->seq_num ; 
+		printf("min_num :%d\n" , min_num) ; 	
+	}else if(flags == 1){ 
+		max_num = w->seq_num ; 
+		printf("max_num :%d\n" , min_num) ; 	
+	}	
+	printf("next_tx %p dddd\n", next_tx ) ;
+	int i = 0 ; 	
+	while( next_tx != NULL ){ 
+		printf(" next_tx = [%p]\n", next_tx) ; 	
+		for(i = head_tx->w_set.nb_entries ; i > 0 ; i-- , w++ ){ 
+			if(flags == 0){ 
+				if( min_num > w->seq_num ){ 
+					min_num = w->seq_num; 
+				}
+			}else if(flags == 1){ 
+				if( max_num < w->seq_num){ 
+					max_num = w->seq_num ; 
+				}
+			}
+		}
+		next_tx = head_tx->next ;
+		/* keonwoo must check */  
+		if( next_tx == head_tx->next ) break ; 
+		printf(" nnext_tx = [%p]\n", next_tx) ;	
+	} 
+
+	if( flags == 0 )
+		printf("[%s]min_value[%d]\n",__func__,min_num) ; 	
+	else if(flags == 1)
+		printf("[%s]max_value[%d]\n",__func__,max_num) ; 	
+	/* return min_max_num */ 
+} 
+void look_seqnum(stm_tx_t *head_tx){ 
+	int i ; 
+	/* unefficient code */ 		
+	get_min_or_max(head_tx,0) ; 	
+	get_min_or_max(head_tx,1) ; 
+	/* get min_num and max num */ 	
+	if( max_num - min_num > 50000 ){ 
+		int tmp = max_num ; 	
+		max_num = min_num ; 	
+		min_num = tmp ; 	
+		overflow_flags = 1; 	
+	}
+} 
+void
+normal_recovery(stm_tx_t *tx){ 
+	// max -> min 
+	
+	printf("NORMAL RECOVERY\n") ; 	
+	//sleep(10) ;
+	stm_tx_t *head_tx = NULL ; 
+	head_tx = tx ; 	
+	printf("head_tx = %p\n" , head_tx ) ;
+	sleep(2);
+	w_entry_t *w = tx->w_set.entries ; 	
+	stm_tx_t *next_tx = tx ; 	
+
+//	printf("head_tx[%p], tx[%p]\n" , head_tx , tx) ; 	
+	
+	int i,j = 0 ; 	
+	for( i = max_num ; i >= min_num ; i--){ 
+		printf("[i=%d]\n",i) ; 
+		while( next_tx != NULL ){ 
+ 			for( j = tx->w_set.nb_entries; j>0 ; j-- , w++){ 
+				if( w->seq_num == i && w->commit_mark == 1 ){ 
+ 					//rollback//
+					printf("ROLLBACK\n") ; 	
+					sleep(10) ; 	
+				}else{ 
+					printf("[%p][w->seq_num:%d][w->commit_mark=%d]\n", 
+						w->addr,w->seq_num , w->commit_mark) ; 	
+					sleep(3) ; 	
+				}
+			}
+			if( next_tx == tx->next ) break ; 
+			next_tx = tx->next ; 	
+		}
+	} /* find seq_num and rollback mechanism */  
+
+	
+	/* if recovery completed */ 
+	//stm_tx_t *tmp = tx; 	
+	printf("tx[%p]\n", head_tx) ; 	
+	while( head_tx != NULL ){
+	//	int_stm_exit_thread( head_tx ) ; 	
+		if( next_tx == tx->next ) break ; 
+		head_tx = head_tx->next ; 
+	}
+	min_num = 0 ; 	
+	max_num = 0 ;
+	sleep(1) ;
+	//TM_EXIT_THREAD(ex) ; 	
+	//min_num , max_num = 0 ; 	
+	return ; 	
+} 
+void
+int_stm_recovery(struct list_head *head){ 
+	
+	struct list_node *node ; 	
+	printf("head = %p\n" , head) ; 	
+	node = head->head ; 
+	printf("NODE : %p\n" , *node->value) ; 	
+	printf("NODE : %p\n" , node->value) ; 	
+	/* node is stm_tx_t type */ 	
+//	node = node->next ; 	
+//	printf("NNODE : %p\n" , *node->value) ;	
+//	printf("NNODE : %p\n" , node->value) ;	
+	stm_tx_t *tx = (stm_tx_t *)node->value ; 	
+
+	//char *addr = (char *)tx ; 	
+	//printf("value : %d %c\n" , addr[0] , addr[0]) ;
+
+	//#if KEONWOO_DEBUG == 1 
+	//printf("[%s] internal function\n", __func__) ;
+	//#endif 
+	look_seqnum(tx) ; 		
+	/* Now, Recovery mechanism start */ 
+	if( overflow_flags == 0 ){ /* normal case */
+		normal_recovery( tx ) ; 	
+	}else if( overflow_flags == 1){ /* overflow unsigned short */ 
+		printf("****NOT IMPLEMENT YET*****\n") ; 
+		printf("    [OVERFLOW CASE]       \n") ; 	
+		sleep(10) ; 	
+
+	}
+	overflow_flags = 0 ; 	
+	return ; 		
+} 
+#endif 
+
 
 static INLINE void
 int_stm_store(stm_tx_t *tx, volatile stm_word_t *addr, stm_word_t value)

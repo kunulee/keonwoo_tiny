@@ -79,6 +79,7 @@
 # include <stdint.h>
 # include <stdio.h>
 # include <stdlib.h>
+# include "../src/esos_header.h" 
 
 /**
  * Version string
@@ -267,6 +268,12 @@ enum {
 /* ################################################################### *
  * FUNCTIONS
  * ################################################################### */
+
+#if KEONWOO_DEBUG == 1 	
+//void tm_recovery(struct list_head *head);
+#endif 
+
+
 
 /**
  * Initialize the STM library.  This function must be called once, from

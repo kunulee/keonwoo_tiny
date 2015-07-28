@@ -243,6 +243,15 @@ signal_catcher(int sig)
 /* ################################################################### *
  * STM FUNCTIONS
  * ################################################################### */
+#if HEAP_TINY_RECOVERY_FLAGS == 1 	
+void
+tm_recovery(struct list_head *head){ 
+#if KEONWOO_DEBUG == 1
+	printf("[%s]\n",__func__) ;	
+#endif 
+	int_stm_recovery(head) ; 
+} 
+#endif
 
 /*
  * Called once (from main) to initialize STM infrastructure.
@@ -425,7 +434,7 @@ stm_load_tx(stm_tx_t *tx, volatile stm_word_t *addr)
 {
   return int_stm_load(tx, addr);
 }
-/* Keonwoo */
+/*
 #define mb() asm volatile("mfence":::"memory")
 int x86_64_clflush_size = 64; 
 
@@ -472,7 +481,7 @@ void print_delayed_buffer(){
 	}
 	return ;
 } 
-
+*/
 
 /*
  * Called by the CURRENT thread to store a word-sized value.
